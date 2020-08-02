@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import os
 device = torch.device('cuda')
+torch.set_default_tensor_type('torch.cuda.FloatTensor')
 def findlayer(model,layernumber,wob):
     if wob==0:
         layer='fc'+str(layernumber)+'.weight'
@@ -39,6 +40,7 @@ def adjust(model,images,threshold_u=100.0,threshold_l=0.1,scale=1.0,ln=1,oflag=0
             for k in range(L):
                 image=images[k]
                 l=-model.state_dict()['fc'+str(ln)+'.weight'][i]/model.state_dict()['fc'+str(ln)+'.bias'][i]
+                #image=torch.min(image,torch.tensor(0.0001))
                 x_k=1/image.to(device)
 
                 d_k=(torch.abs(torch.sum(l*x_k)-1.0)/torch.norm(x_k))
@@ -83,3 +85,8 @@ def accuracy(model,valloader):
             t=t+(torch.argmax(outputs,dim=1) == labels).float().sum()
             c=c+len(outputs)
     print('Accuracy: {:.4f} %' .format(t/c*100))
+    return t/c*100
+
+def one_hot(x, num_classes):
+
+	return torch.eye(num_classes)[x,:]
