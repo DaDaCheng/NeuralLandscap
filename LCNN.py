@@ -5,6 +5,7 @@ import os
 device = torch.device('cuda')
 torch.set_default_tensor_type('torch.cuda.FloatTensor')
 def findlayer(model,layernumber,wob):
+# It is the function to find the index of the layer.
     if wob==0:
         layer='fc'+str(layernumber)+'.weight'
     else:
@@ -14,12 +15,15 @@ def findlayer(model,layernumber,wob):
         if name==layer:
             break
         i=i+1
+        if name[:2]=='bn' and (name[4:]== 'running_mean'  or name[4:]== 'running_var' or name[4:]== 'num_batches_tracked'):
+            i=i-1
     if i==len(model.state_dict()):
         raise IOError('Layer Name Error')
     return i
 
 
 def BetaAdaptive(model,ln,i,beta=1.0):
+# It is the function to do beta modificaiton for the i-th node in Layer ln.
     with torch.no_grad():
         firstweight=findlayer(model,ln,0)
         firstbias=findlayer(model,ln,1)
@@ -29,7 +33,7 @@ def BetaAdaptive(model,ln,i,beta=1.0):
         params[firstbias][1].data[i]=params[firstbias][1].data[i]/beta
         params[secondweight][1].data[:,i]=params[secondweight][1].data[:,i]*beta
 
-def adjust(model,images,threshold_u=100.0,threshold_l=0.1,scale=1.0,ln=1,oflag=0,shuff=0):
+def adjust(model,images,threshold_u=100.0,threshold_l=0.1,scale=1.0,ln=1,oflag=0,shuff=0,mode=0):
     with torch.no_grad():
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
         L=len(images)
@@ -37,34 +41,57 @@ def adjust(model,images,threshold_u=100.0,threshold_l=0.1,scale=1.0,ln=1,oflag=0
         d_=torch.zeros(hs).to(device)
         for i in range(hs):
             d=0
+            b=model.state_dict()['fc'+str(ln)+'.weight'][i].detach()
+            a=model.state_dict()['fc'+str(ln)+'.bias'][i].detach()
             for k in range(L):
                 image=images[k]
-                l=-model.state_dict()['fc'+str(ln)+'.weight'][i]/model.state_dict()['fc'+str(ln)+'.bias'][i]
-                #image=torch.min(image,torch.tensor(0.0001))
+                l=-b/a
                 x_k=1/image.to(device)
-
                 d_k=(torch.abs(torch.sum(l*x_k)-1.0)/torch.norm(x_k))
                 d=d+d_k
 
             d_[i]=d/L
 
+        
+        
+
+        if mode==1:
+            d_=d_**2
+
+        if mode==2:
+            for i in range(hs):
+                a=torch.norm(model.state_dict()['fc'+str(ln)+'.weight'][i])
+                b=torch.norm(model.state_dict()['fc'+str(ln)+'.bias'][i])
+                c=torch.norm(model.state_dict()['fc'+str(ln+1)+'.weight'][:,i])
+                
+                det= torch.sqrt(c*c/len(model.state_dict()['fc'+str(ln+1)+'.weight'][:,i])/((b*b+a*a)/(len(model.state_dict()['fc'+str(ln)+'.weight'][i])+1)))
+                if oflag>2:
+                    print(det)
+                
+                d_[i]=d_[i]*d_[i]
+                d_[i]=d_[i]/(det*det)
+
+
         d_=d_*scale
-        d_=d_**2
+
         d_=torch.min(d_,torch.tensor(threshold_u*1.0))
         d_=torch.max(d_,torch.tensor(threshold_l*1.0))
+
 
         ilist=np.arange(hs)
 
 
+
+
         if shuff>0:
             import random
-        if shuff==1:
-            random.shuffle(ilist)
-        
-
-        for i in ilist:
+            if shuff==1:
+                random.shuffle(ilist)
             if shuff==2:
-                d_[i]=random.uniform(0.1, 2)
+                for i in ilist:
+                    d_[i]=random.uniform(0.1, 2)
+                    
+        for i in ilist:
             BetaAdaptive(model,ln,i,d_[i])
 
         if oflag>1:
