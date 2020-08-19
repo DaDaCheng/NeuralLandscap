@@ -33,6 +33,75 @@ def BetaAdaptive(model,ln,i,beta=1.0):
         params[firstbias][1].data[i]=params[firstbias][1].data[i]/beta
         params[secondweight][1].data[:,i]=params[secondweight][1].data[:,i]*beta
 
+
+
+def adjust_(model,activation,images,threshold_u=100.0,threshold_l=0.1,scale=1.0,ln=1,oflag=0,shuff=0,mode=0):
+    with torch.no_grad():
+        torch.set_default_tensor_type('torch.cuda.FloatTensor')
+        d=activation
+        b=model.state_dict()['fc'+str(ln)+'.bias'].to(device)
+        distance=torch.abs(d/b)/torch.norm(images,dim=1).reshape(len(images),-1).to(device)
+        d=torch.mean(distance,dim=0).to(device)
+        #d_=(d-torch.mean(d))/torch.var(d).to(device)
+        #d_=d_+1
+        d_=d/torch.mean(d)
+            
+        d_=d_*d_
+        if mode==0:
+            d_=d_*scale
+        
+
+        if mode==1:
+            d_=d_*scale
+            d_[d_>1]=threshold_u
+            d_[d_<1]=threshold_l
+
+
+
+        if mode==2:
+            clen=len(model.state_dict()['fc'+str(ln+1)+'.weight'][:,0])
+            alen=len(model.state_dict()['fc'+str(ln)+'.weight'][0])
+
+            a=torch.norm(model.state_dict()['fc'+str(ln)+'.weight'],dim=1).to(device)
+            model.state_dict()['fc'+str(ln)+'.bias'].to(device)
+            c=torch.norm(model.state_dict()['fc'+str(ln+1)+'.weight'],dim=0).to(device)
+            
+            det= ((c*c)/(clen))  /((a*a+b*b)/(alen+1))
+
+            
+            #d_=d_*d_
+            d_=d_/(det)
+            d_=d_*scale
+
+
+            if oflag>2:
+                print(det)
+            
+
+        if shuff==-1:
+            d_=1/d_
+
+        if shuff==-2:
+            d_=threshold_u*torch.ones_like(d_)
+
+        if shuff==-3:
+            d_=threshold_l*torch.ones_like(d_)
+
+        d_=torch.min(d_,torch.tensor(threshold_u*1.0))
+        d_=torch.max(d_,torch.tensor(threshold_l*1.0))
+
+
+        for i in range(len(activation[0])):
+            BetaAdaptive(model,ln,i,d_[i])
+
+        if oflag>1:
+            print(d_)
+
+        if oflag>0:
+            print ('Adjusting Layer {}, Kernel Nodes: {}, Adptive Nodes:{}' .format(ln, torch.sum((d_<1).int()).item(), torch.sum((d_>1).int()).item()))
+
+
+
 def adjust(model,images,threshold_u=100.0,threshold_l=0.1,scale=1.0,ln=1,oflag=0,shuff=0,mode=0):
     with torch.no_grad():
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
@@ -41,18 +110,18 @@ def adjust(model,images,threshold_u=100.0,threshold_l=0.1,scale=1.0,ln=1,oflag=0
         d_=torch.zeros(hs).to(device)
         for i in range(hs):
             d=0
-            b=model.state_dict()['fc'+str(ln)+'.weight'][i].detach()
-            a=model.state_dict()['fc'+str(ln)+'.bias'][i].detach()
+            a=model.state_dict()['fc'+str(ln)+'.weight'][i].detach()
+            b=model.state_dict()['fc'+str(ln)+'.bias'][i].detach()
             for k in range(L):
                 image=images[k]
-                l=-b/a
-                x_k=1/image.to(device)
+                l=-a/b
+                x_k=image.to(device)
                 d_k=(torch.abs(torch.sum(l*x_k)-1.0)/torch.norm(x_k))
                 d=d+d_k
 
             d_[i]=d/L
 
-        
+
         
 
         if mode==1:
@@ -73,6 +142,15 @@ def adjust(model,images,threshold_u=100.0,threshold_l=0.1,scale=1.0,ln=1,oflag=0
 
 
         d_=d_*scale
+
+        if shuff==-1:
+            d_=1/d_
+
+        if shuff==-2:
+            d_=threshold_u*torch.ones_like(d_)
+
+        if shuff==-3:
+            d_=threshold_l*torch.ones_like(d_)
 
         d_=torch.min(d_,torch.tensor(threshold_u*1.0))
         d_=torch.max(d_,torch.tensor(threshold_l*1.0))
@@ -98,7 +176,7 @@ def adjust(model,images,threshold_u=100.0,threshold_l=0.1,scale=1.0,ln=1,oflag=0
             print(d_)
 
         if oflag>0:
-            print ('Adjusting Layer {}, Kernel Nodes: {}, Adptive Nodes{}' .format(ln, torch.sum((d_<1).int()).item(), torch.sum((d_>1).int()).item()))
+            print ('Adjusting Layer {}, Kernel Nodes: {}, Adptive Nodes:{}' .format(ln, torch.sum((d_<1).int()).item(), torch.sum((d_>1).int()).item()))
 
 
 def accuracy(model,valloader):
